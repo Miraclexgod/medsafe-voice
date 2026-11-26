@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MedSafe Voice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+      <rect x="2" y="2" width="36" height="36" rx="11" fill="var(--teal)"/>
+      <path d="M17 10h6v7h7v6h-7v7h-6v-7h-7v-6h7z" fill="#fff"/>
+      <circle cx="31" cy="31" r="6" fill="var(--red)" stroke="#fff" stroke-width="2"/>
+    </svg>
+    <div>
+      <b>MedSafe Voice</b>
+      <small>ИИ-помощник по медицинской безопасности</small>
+    </div>
+  </div>
+  <div class="status" id="aiStatus" title="Состояние ИИ">ИИ: проверяю…</div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="visit" class="on">Приём</button>
+  <button data-tab="labs">Анализы</button>
+  <button data-tab="card">Медкарта <span class="badge" id="pendingBadge" hidden></span></button>
+  <button data-tab="risks">Риски <span class="badge red" id="riskBadge" hidden></span></button>
+  <button data-tab="plan">План</button>
+  <button data-tab="reminders">Напоминания</button>
+  <button data-tab="mood">Самочувствие</button>
+  <button data-tab="kb">База знаний</button>
+  <button data-tab="about">О проекте</button>
+</nav>
+
+<main>
+
+<!-- ПРИЁМ -->
+<section class="view on" id="view-visit">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Запишите приём голосом</h2>
+      <p class="muted">Нажмите на микрофон и говорите: жалобы, анамнез, назначения. Текст можно поправить руками.</p>
+      <div class="mic-row">
+        <button class="mic" id="micBtn" aria-label="Начать запись">
+          <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1a7 7 0 0 0 6-6.9z"/></svg>
+        </button>
+        <div>
+          <div id="micState" class="mic-state">Готов к записи</div>
+          <div class="muted small" id="micHint">Голос работает в Chrome и Edge</div>
+        </div>
+      </div>
+      <label for="visitText" class="lbl">Расшифровка</label>
+      <textarea id="visitText" rows="8" placeholder="Например: Пациент жалуется на кашель и температуру 38…"></textarea>
+      <div class="row">
+        <button class="btn ghost" id="sampleBtn">Вставить пример</button>
+        <button class="btn ghost" id="clearText">Очистить</button>
+        <button class="btn primary" id="processVisit">Обработать ИИ</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Ответ ИИ</h2>
+      <div id="visitResult" class="result empty">Здесь появится разбор: что ИИ разложил по медкарте и какие риски нашёл.</div>
+    </div>
+  </div>
+</section>
+
+<!-- АНАЛИЗЫ -->
+<section class="view" id="view-labs">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Загрузите анализ</h2>
+      <p class="muted">Фото бланка или PDF из лаборатории, до 3 МБ. ИИ достанет показатели и сравнит с нормой.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="labFile" accept="image/*,application/pdf">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h5v2H8z"/></svg>
+        <span id="fileName">Выберите файл или перетащите сюда</span>
+      </label>
+      <div class="row">
+        <button class="btn ghost" id="sampleLab">Демо-анализ</button>
+        <button class="btn primary" id="processLab" disabled>Распознать ИИ</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Показатели</h2>
+      <div id="labResult" class="result empty">Пока анализов нет.</div>
+    </div>
+  </div>
+</section>
+
+<!-- МЕДКАРТА -->
+<section class="view" id="view-card">
+  <div class="panel">
+    <div class="head-row">
+      <h2>Профиль пациента</h2>
+      <button class="btn ghost sm" id="editProfile">Изменить</button>
+    </div>
+    <div id="profile" class="profile"></div>
+  </div>
+  <div class="panel">
+    <div class="head-row">
+      <h2>Медицинская карта</h2>
+      <button class="btn ghost sm" id="confirmAll">Подтвердить весь текст</button>
+    </div>
+    <p class="muted">Жёлтые пункты предложил ИИ. Проверьте и подтвердите, исправьте или удалите их. Дозировки и значения анализов подтверждаются отдельно, по одному: ошибка в числе опаснее всего.</p>
+    <div id="cardView"></div>
+  </div>
+</section>
+
+<!-- РИСКИ -->
+<section class="view" id="view-risks">
+  <div class="panel">
+    <div class="head-row">
+      <h2>Риски и недостающие данные</h2>
+      <button class="btn primary sm" id="recheck">Перепроверить ИИ</button>
+    </div>
+    <div id="riskView"></div>
+  </div>
+</section>
+
+<!-- ПЛАН -->
+<section class="view" id="view-plan">
+  <div class="panel">
+    <div class="head-row">
+      <h2>План сопровождения</h2>
+      <button class="btn primary sm" id="makePlan">Сформировать план</button>
+    </div>
+    <p class="muted">План строится только по подтверждённой карте: лекарства, контрольные точки, красные флаги и сводка к следующему визиту.</p>
+    <div id="planView"></div>
+  </div>
+</section>
+
+<!-- НАПОМИНАНИЯ -->
+<section class="view" id="view-reminders">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Новое напоминание</h2>
+      <form id="remForm" class="form">
+        <label class="lbl" for="remTitle">Что</label>
+        <input id="remTitle" placeholder="Например: Амоксициллин 500 мг" required>
+        <label class="lbl" for="remWhen">Когда</label>
+        <input id="remWhen" placeholder="Например: 08:00, 14:00, 20:00" required>
+        <button class="btn primary">Добавить</button>
+      </form>
+      <h3>Предложено ИИ</h3>
+      <div id="remSuggest" class="muted">После обработки приёма или анализа здесь появятся предложения.</div>
+    </div>
+    <div class="panel">
+      <h2>Мои напоминания</h2>
+      <div id="remList"></div>
+    </div>
+  </div>
+</section>
+
+<!-- САМОЧУВСТВИЕ -->
+<section class="view" id="view-mood">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Как вы себя чувствуете?</h2>
+      <div class="mood-big"><span id="moodVal">7</span><small>/10</small></div>
+      <input type="range" id="moodRange" min="1" max="10" value="7" aria-label="Самочувствие от 1 до 10">
+      <label class="lbl" for="moodNote">Заметка</label>
+      <input id="moodNote" placeholder="Например: кашель меньше, температура 37,2">
+      <button class="btn primary" id="moodSave">Сохранить</button>
+    </div>
+    <div class="panel">
+      <h2>Динамика</h2>
+      <div id="moodChart" class="bars"></div>
+      <div id="moodList"></div>
+    </div>
+  </div>
+</section>
+
+<!-- БАЗА ЗНАНИЙ -->
+<section class="view" id="view-kb">
+  <div class="panel">
+    <h2>База знаний</h2>
+    <p class="muted" id="kbAbout">Эти данные отправляются ИИ вместе с каждым запросом. По ним он сверяет нормы, проверяет полноту карты и ищет опасные сочетания.</p>
+    <div id="kbView"></div>
+  </div>
+</section>
+
+<!-- О ПРОЕКТЕ -->
+<section class="view" id="view-about">
+  <div class="panel about">
+    <h2>Зачем MedSafe Voice</h2>
+    <p>На приёме врач много говорит и мало успевает записать. Пациент сам часто забывает, какие у него аллергии и что он уже принимает. Из-за этого случаются ошибки: назначили препарат, на который аллергия, или два лекарства, которые плохо сочетаются.</p>
+    <p>MedSafe Voice записывает приём голосом, переводит в текст и сам раскладывает всё по медкарте. Анализы можно просто сфотографировать. После этого ИИ проверяет всю карту целиком и подсвечивает риски.</p>
+    <div class="flow">
+      <div><b>1</b>Голос или фото</div>
+      <div><b>2</b>Обезличивание</div>
+      <div><b>3</b>ИИ сверяет с базой знаний</div>
+      
+      <div><b>4</b>Человек подтверждает</div>
+      <div><b>5</b>План и напоминания</div>
+    </div>
+    <p class="warn">Это прототип для учебного проекта. ИИ не ставит диагноз и не заменяет врача: каждый пункт проверяет и подтверждает человек.</p>
+    <button class="btn ghost" id="resetAll">Сбросить все данные</button>
+  </div>
+</section>
+
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<dialog id="profileDlg">
+  <form method="dialog" id="profileForm" class="form">
+    <h2>Профиль пациента</h2>
+    <label class="lbl" for="pName">Имя</label><input id="pName">
+    <label class="lbl" for="pAge">Возраст</label><input id="pAge" inputmode="numeric">
+    <label class="lbl" for="pWeight">Вес, кг</label><input id="pWeight" inputmode="decimal">
+    <label class="lbl" for="pAllergies">Аллергии (через запятую)</label><input id="pAllergies">
+    <label class="lbl" for="pChronic">Хронические заболевания</label><input id="pChronic">
+    <label class="lbl" for="pMeds">Уже принимает</label><input id="pMeds">
+    <div class="row">
+      <button class="btn ghost" value="cancel">Отмена</button>
+      <button class="btn primary" value="ok">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
