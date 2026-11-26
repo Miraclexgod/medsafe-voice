@@ -95,10 +95,21 @@ function anonymize(text, names = []) {
 // ===== Вызов ИИ =====
 async function callAI(payload) {
   if (aiMode === 'live') {
-    const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.message || 'Сервер ИИ не ответил');
-    return { result: data.result, anonymized: data.anonymized };
+    // Одна автоматическая повторная попытка, если сервер или ИИ временно не ответили
+    let lastErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const raw = await r.text();
+        let data = {};
+        try { data = JSON.parse(raw); } catch {}
+        if (r.ok && data.result) return { result: data.result, anonymized: data.anonymized };
+        lastErr = new Error(data.message || (r.status === 504 ? 'ИИ отвечал слишком долго (код 504). Попробуйте ещё раз.' : r.status === 413 ? 'Файл слишком большой для отправки.' : `Сервер ИИ не ответил (код ${r.status}).`));
+        if (r.status === 400 || r.status === 413 || r.status === 501) break;
+      } catch (e) { lastErr = new Error('Нет связи с сервером: ' + e.message); }
+      if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+    }
+    throw lastErr;
   }
   await new Promise(r => setTimeout(r, 1200));
   const anonymized = anonymize(payload.text || '', [payload.patient?.name]);
