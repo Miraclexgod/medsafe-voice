@@ -6,6 +6,9 @@
 
 const KB = require('../knowledge.json');
 
+// Запасные модели на случай перегрузки основной
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+
 const SYSTEM_PROMPT = `Ты — MedSafe Voice, ИИ-помощник по медицинской безопасности. Ты помогаешь врачу или пациенту вести медкарту.
 
 Твои задачи:
@@ -113,23 +116,40 @@ module.exports = async (req, res) => {
   const parts = [{ text: userText }];
   if (file && file.data && file.mimeType) parts.push({ inlineData: { mimeType: file.mimeType, data: file.data } });
 
+  const reqBody = JSON.stringify({
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [{ role: 'user', parts }],
+    generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
+  });
+
+  // Если модель перегружена — повторяем и переходим на запасные модели
+  const models = [...new Set([model, ...FALLBACK_MODELS])];
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let lastError = 'Ошибка Gemini';
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
-      })
-    });
-    const data = await r.json();
-    if (!r.ok) { res.status(502).json({ error: 'gemini_error', message: data?.error?.message || 'Ошибка Gemini' }); return; }
-    const raw = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-    let result;
-    try { result = JSON.parse(clean); } catch { res.status(502).json({ error: 'bad_json', message: 'ИИ вернул ответ не в формате JSON' }); return; }
-    res.status(200).json({ model, result, anonymized: { text: anon.text, removed: anon.removed + cardAnon.removed } });
+    for (const m of models) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: reqBody
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          const raw = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+          const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+          let result;
+          try { result = JSON.parse(clean); } catch { lastError = 'ИИ вернул ответ не в формате JSON'; break; }
+          res.status(200).json({ model: m, result, anonymized: { text: anon.text, removed: anon.removed + cardAnon.removed } });
+          return;
+        }
+        lastError = data?.error?.message || `Ошибка Gemini (${r.status})`;
+        if (r.status === 400 || r.status === 401 || r.status === 403) { res.status(502).json({ error: 'gemini_error', message: lastError }); return; }
+        if (r.status === 404) break;            // такой модели нет — следующая
+        if (attempt === 0) await sleep(1500);   // 429 / 500 / 503 — подождать и повторить
+      }
+    }
+    res.status(503).json({ error: 'busy', message: 'Серверы ИИ сейчас перегружены, попробуйте ещё раз через минуту. (' + lastError + ')' });
   } catch (e) {
     res.status(500).json({ error: 'server_error', message: String(e.message || e) });
   }

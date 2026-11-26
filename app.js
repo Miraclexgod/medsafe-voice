@@ -1,18 +1,30 @@
 {
 // ===== Состояние =====
-const KEY = 'medsafe-voice-v1';
+const KEY = 'medsafe-voice-db-v2';
 const uid = () => Math.random().toString(36).slice(2, 9);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = id => document.getElementById(id);
 
-const freshState = () => ({
-  patient: { name: 'Айгерим С.', age: '34', weight: '', allergies: ['пенициллин'], chronic: ['хронический гастрит'], meds: ['аспирин 100 мг'] },
+// Одна запись пациента в базе: профиль + его медкарта, риски, план, напоминания
+const newRecord = (iin, patient) => ({
+  id: uid(), iin, createdAt: new Date().toISOString(),
+  patient: { name: '', age: '', sex: '', weight: '', allergies: [], chronic: [], meds: [], ...patient },
   card: { complaints: [], anamnesis: [], prescriptions: [], notes: [], labs: [] },
   risks: [], missing: [], suggested: [], reminders: [], mood: [], plan: null
 });
-let S = freshState();
-try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.card) S = { ...freshState(), ...saved }; } catch {}
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+// Вымышленные пациенты для демонстрации
+const seedDB = () => {
+  const a = newRecord('920314450128', { name: 'Серикова Айгерим Нурлановна', age: '34', sex: 'ж', allergies: ['пенициллин'], chronic: ['хронический гастрит'], meds: ['аспирин 100 мг'] });
+  const b = newRecord('781105350417', { name: 'Ахметов Ерлан Каиратович', age: '48', sex: 'м', weight: '86', allergies: [], chronic: ['гипертония', 'повышенный холестерин'], meds: ['эналаприл 10 мг', 'симвастатин 20 мг'] });
+  const c = newRecord('010722600935', { name: 'Ким Дана Сергеевна', age: '25', sex: 'ж', weight: '58', allergies: ['не выявлено'], chronic: [], meds: [] });
+  return { patients: [a, b, c], currentId: null };
+};
+let DB = seedDB();
+try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && Array.isArray(saved.patients)) DB = saved; } catch {}
+let S = DB.patients.find(p => p.id === DB.currentId) || null;
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} };
+const maskIin = i => String(i || '').replace(/^(\d{6})\d{4}(\d{2})$/, '$1••••$2');
+const shortName = n => { const w = String(n || '').trim().split(/\s+/); return w.length > 1 ? `${w[0]} ${w[1][0]}.` : (w[0] || 'Без имени'); };
 
 let aiMode = 'demo'; // 'live' — работает Gemini, 'demo' — встроенные примеры ответов
 
@@ -125,6 +137,7 @@ function merge(res) {
 }
 
 // Данные карты для ИИ (без служебных полей)
+const patientForAI = () => S.patient;
 const cardForAI = () => {
   const strip = arr => arr.map(({ id, ...rest }) => rest);
   return Object.fromEntries(Object.entries(S.card).map(([k, v]) => [k, strip(v)]));
@@ -153,7 +166,7 @@ function labsTable(labs) {
 function renderProfile() {
   const p = S.patient;
   const cell = (k, v, alert) => `<div class="${alert ? 'alert' : ''}"><small>${k}</small><b>${esc(v || '—')}</b></div>`;
-  $('profile').innerHTML = cell('Пациент', p.name) + cell('Возраст', p.age) + cell('Вес', p.weight ? p.weight + ' кг' : '') +
+  $('profile').innerHTML = cell('Пациент', p.name) + cell('ИИН', maskIin(S.iin)) + cell('Возраст', p.age) + cell('Пол', p.sex === 'ж' ? 'женский' : p.sex === 'м' ? 'мужской' : '') + cell('Вес', p.weight ? p.weight + ' кг' : '') +
     cell('Аллергии', p.allergies.join(', '), p.allergies.length) + cell('Хронические', p.chronic.join(', ')) + cell('Принимает', p.meds.join(', '));
 }
 
@@ -202,10 +215,61 @@ function renderBadges() {
   $('riskBadge').hidden = !high; $('riskBadge').textContent = high;
 }
 
-function renderAll() { renderProfile(); renderCard(); renderRisks(); renderPlan(); renderReminders(); renderMood(); renderBadges(); }
+function renderAll() {
+  renderPatients(); renderChip();
+  if (!S) { renderBadgesEmpty(); return; }
+  renderProfile(); renderCard(); renderRisks(); renderPlan(); renderReminders(); renderMood(); renderBadges();
+}
+const renderBadgesEmpty = () => { $('pendingBadge').hidden = true; $('riskBadge').hidden = true; };
+function renderChip() {
+  const c = $('pChip');
+  c.hidden = !S;
+  if (S) c.textContent = `${shortName(S.patient.name)} · ИИН ${maskIin(S.iin)} · сменить`;
+}
+
+// ===== База пациентов: поиск по ИИН или ФИО =====
+function renderPatients() {
+  const q = $('pSearch').value.trim().toLowerCase();
+  const digits = q.replace(/\D/g, '');
+  const list = DB.patients.filter(p => !q || (digits && p.iin.includes(digits)) || p.patient.name.toLowerCase().includes(q));
+  const row = p => {
+    const high = p.risks.filter(r => r.level === 'high').length;
+    const pend = ['complaints', 'anamnesis', 'prescriptions', 'notes', 'labs'].reduce((n, k) => n + p.card[k].filter(i => i.status !== 'ok').length, 0);
+    return `<button class="prow ${S && S.id === p.id ? 'cur' : ''}" data-pid="${p.id}">
+      <span><b>${esc(p.patient.name || 'Без имени')}</b><small>ИИН ${esc(p.iin)} · ${esc(p.patient.age || '?')} лет</small></span>
+      <span class="flags">${p.patient.allergies.filter(a => a && a !== 'не выявлено').length ? `<span class="pill red">Аллергия: ${esc(p.patient.allergies.join(', '))}</span>` : ''}${high ? `<span class="pill red">Высокий риск: ${high}</span>` : ''}${pend ? `<span class="pill amber">Не проверено: ${pend}</span>` : ''}<span class="pill">Записей: ${p.card.complaints.length + p.card.labs.length + p.card.prescriptions.length}</span></span>
+    </button>`;
+  };
+  let html = list.map(row).join('');
+  if (!list.length) {
+    html = /^\d{12}$/.test(digits)
+      ? `<div class="notfound"><b>Пациент с ИИН ${esc(digits)} не найден</b><p class="muted">Создайте новую карту, ИИН уже подставлен.</p><button class="btn primary" id="pCreateFound">Создать карту</button></div>`
+      : `<div class="notfound muted">Никого не нашлось. Проверьте ИИН (12 цифр) или ФИО.</div>`;
+  }
+  $('pResults').innerHTML = html;
+}
+function openPatient(id) {
+  S = DB.patients.find(p => p.id === id) || null;
+  DB.currentId = S ? S.id : null; save();
+  $('visitText').value = '';
+  $('visitResult').className = 'result empty'; $('visitResult').textContent = 'Здесь появится разбор: что ИИ разложил по медкарте и какие риски нашёл.';
+  $('labResult').className = 'result empty'; $('labResult').textContent = 'Пока анализов нет.';
+  labFile = null; $('fileName').textContent = 'Выберите файл или перетащите сюда'; $('processLab').disabled = true;
+  renderAll();
+  if (S) { toast('Открыта карта: ' + shortName(S.patient.name)); go('visit'); }
+}
+$('pSearch').addEventListener('input', renderPatients);
+$('pSearch').addEventListener('keydown', e => { if (e.key === 'Enter') { const first = $('pResults').querySelector('[data-pid]'); if (first) openPatient(first.dataset.pid); else if ($('pCreateFound')) openProfileDlg(true); } });
+$('pResults').addEventListener('click', e => {
+  const b = e.target.closest('[data-pid]'); if (b) { openPatient(b.dataset.pid); return; }
+  if (e.target.id === 'pCreateFound') openProfileDlg(true);
+});
+$('pNew').addEventListener('click', () => openProfileDlg(true));
+$('pChip').addEventListener('click', () => go('patients'));
 
 // ===== Вкладки =====
 function go(tab) {
+  if (!S && !['patients', 'kb', 'about'].includes(tab)) { tab = 'patients'; toast('Сначала выберите пациента по ИИН'); }
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + tab));
   if (location.hash.slice(1) !== tab) history.replaceState(null, '', '#' + tab);
@@ -246,7 +310,7 @@ $('processVisit').addEventListener('click', async () => {
   const btn = $('processVisit'); btn.disabled = true;
   loading($('visitResult'), 'ИИ разбирает запись и проверяет риски…');
   try {
-    const { result: res, anonymized } = await callAI({ mode: 'visit', text, patient: S.patient, card: cardForAI() });
+    const { result: res, anonymized } = await callAI({ mode: 'visit', text, patient: patientForAI(), card: cardForAI() });
     $('visitResult').innerHTML = anonHTML(anonymized) + resultHTML(res);
     merge(res); toast('Данные добавлены в медкарту, проверьте их');
   } catch (e) { $('visitResult').innerHTML = `<div class="risk high"><b>Не получилось</b>${esc(e.message)}</div>`; }
@@ -292,7 +356,7 @@ $('processLab').addEventListener('click', async () => {
   loading($('labResult'), 'ИИ читает анализ и сравнивает с нормой…');
   try {
     const data = await toB64(labFile);
-    const { result: res } = await callAI({ mode: 'lab', file: { mimeType: labFile.type, data }, patient: S.patient, card: cardForAI() });
+    const { result: res } = await callAI({ mode: 'lab', file: { mimeType: labFile.type, data }, patient: patientForAI(), card: cardForAI() });
     $('labResult').innerHTML = `<div class="summary"><b>ИИ:</b> ${esc(res.summary || 'Готово.')}</div>` + (res.labs?.length ? labsTable(res.labs) : '<p class="muted">Показатели не найдены.</p>') +
       (res.risks?.length ? `<div class="sec"><h4>Риски</h4>${res.risks.map(riskHTML).join('')}</div>` : '') +
       '<div class="row"><button class="btn ghost" data-go="card">Проверить в медкарте</button><button class="btn ghost" data-go="reminders">Напоминания</button></div>';
@@ -330,22 +394,44 @@ $('confirmAll').addEventListener('click', () => {
 
 // ===== Профиль =====
 const split = s => s.split(',').map(x => x.trim()).filter(Boolean);
-$('editProfile').addEventListener('click', () => {
-  const p = S.patient;
-  $('pName').value = p.name; $('pAge').value = p.age; $('pWeight').value = p.weight;
+let creating = false;
+function openProfileDlg(isNew) {
+  creating = isNew;
+  const p = isNew ? { name: '', age: '', sex: '', weight: '', allergies: [], chronic: [], meds: [] } : S.patient;
+  const typed = $('pSearch').value.replace(/\D/g, '');
+  $('dlgTitle').textContent = isNew ? 'Новый пациент' : 'Профиль пациента';
+  $('dlgErr').hidden = true;
+  $('pIin').value = isNew ? (typed.length === 12 ? typed : '') : S.iin;
+  $('pIin').readOnly = !isNew;
+  $('pName').value = p.name; $('pAge').value = p.age; $('pSex').value = p.sex || ''; $('pWeight').value = p.weight;
   $('pAllergies').value = p.allergies.join(', '); $('pChronic').value = p.chronic.join(', '); $('pMeds').value = p.meds.join(', ');
   $('profileDlg').showModal();
+}
+$('editProfile').addEventListener('click', () => { if (S) openProfileDlg(false); });
+$('dlgOk').addEventListener('click', e => {
+  const iin = $('pIin').value.trim();
+  const err = !/^\d{12}$/.test(iin) ? 'ИИН должен состоять из 12 цифр'
+    : !$('pName').value.trim() ? 'Укажите ФИО'
+    : creating && DB.patients.some(p => p.iin === iin) ? 'Пациент с таким ИИН уже есть в базе' : '';
+  if (err) { e.preventDefault(); $('dlgErr').textContent = err; $('dlgErr').hidden = false; }
 });
 $('profileDlg').addEventListener('close', () => {
   if ($('profileDlg').returnValue !== 'ok') return;
-  S.patient = { name: $('pName').value.trim(), age: $('pAge').value.trim(), weight: $('pWeight').value.trim(), allergies: split($('pAllergies').value), chronic: split($('pChronic').value), meds: split($('pMeds').value) };
-  save(); renderAll(); toast('Профиль сохранён. Перепроверьте риски');
+  const data = { name: $('pName').value.trim(), age: $('pAge').value.trim(), sex: $('pSex').value, weight: $('pWeight').value.trim(), allergies: split($('pAllergies').value), chronic: split($('pChronic').value), meds: split($('pMeds').value) };
+  if (creating) {
+    const rec = newRecord($('pIin').value.trim(), data);
+    DB.patients.unshift(rec); save();
+    $('pSearch').value = '';
+    openPatient(rec.id); toast('Пациент добавлен в базу');
+  } else {
+    S.patient = data; save(); renderAll(); toast('Профиль сохранён. Перепроверьте риски');
+  }
 });
 
 // ===== Риски =====
 $('recheck').addEventListener('click', async () => {
   const btn = $('recheck'); btn.disabled = true; btn.textContent = 'Проверяю…';
-  try { const { result: res } = await callAI({ mode: 'check', patient: S.patient, card: cardForAI() }); merge({ risks: res.risks, missing: res.missing, reminders: res.reminders }); toast('Риски обновлены'); }
+  try { const { result: res } = await callAI({ mode: 'check', patient: patientForAI(), card: cardForAI() }); merge({ risks: res.risks, missing: res.missing, reminders: res.reminders }); toast('Риски обновлены'); }
   catch (e) { toast(e.message); }
   btn.disabled = false; btn.textContent = 'Перепроверить ИИ';
 });
@@ -369,7 +455,7 @@ $('makePlan').addEventListener('click', async () => {
   if (n) { $('planView').innerHTML = `<div class="risk medium"><b>Сначала подтвердите карту</b>Не проверено пунктов: ${n}. План строится только по данным, которые подтвердил человек.<div class="row"><button class="btn ghost sm" data-go="card">Открыть медкарту</button></div></div>`; return; }
   const btn = $('makePlan'); btn.disabled = true;
   loading($('planView'), 'ИИ составляет план сопровождения…');
-  try { const { result } = await callAI({ mode: 'plan', patient: S.patient, card: cardForAI() }); S.plan = result; save(); renderPlan(); toast('План готов'); }
+  try { const { result } = await callAI({ mode: 'plan', patient: patientForAI(), card: cardForAI() }); S.plan = result; save(); renderPlan(); toast('План готов'); }
   catch (e) { $('planView').innerHTML = `<div class="risk high"><b>Не получилось</b>${esc(e.message)}</div>`; }
   btn.disabled = false;
 });
@@ -426,8 +512,9 @@ $('moodSave').addEventListener('click', () => {
 
 // ===== Сброс =====
 $('resetAll').addEventListener('click', () => {
-  if ($('resetAll').dataset.sure) { S = freshState(); save(); renderAll(); $('visitResult').className = 'result empty'; $('visitResult').textContent = 'Здесь появится разбор.'; $('labResult').className = 'result empty'; $('labResult').textContent = 'Пока анализов нет.'; $('resetAll').textContent = 'Сбросить все данные'; delete $('resetAll').dataset.sure; toast('Данные сброшены'); return; }
-  $('resetAll').dataset.sure = '1'; $('resetAll').textContent = 'Нажмите ещё раз для сброса';
+  const b = $('resetAll');
+  if (b.dataset.sure) { DB = seedDB(); S = null; save(); delete b.dataset.sure; b.textContent = 'Сбросить всю базу к демо-данным'; openPatient(null); go('patients'); toast('База сброшена'); return; }
+  b.dataset.sure = '1'; b.textContent = 'Нажмите ещё раз для сброса';
 });
 
 // ===== Старт =====
@@ -435,6 +522,6 @@ renderAll();
 renderKB();
 checkAI();
 const start = location.hash.slice(1);
-if (start && $('view-' + start)) go(start);
+if (start && $('view-' + start)) go(start); else go(S ? 'visit' : 'patients');
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if ($('view-' + t)) go(t); });
 }

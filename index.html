@@ -22,11 +22,15 @@
       <small>ИИ-помощник по медицинской безопасности</small>
     </div>
   </div>
-  <div class="status" id="aiStatus" title="Состояние ИИ">ИИ: проверяю…</div>
+  <div class="top-right">
+    <button class="pchip" id="pChip" data-tab-go="patients" hidden></button>
+    <div class="status" id="aiStatus" title="Состояние ИИ">ИИ: проверяю…</div>
+  </div>
 </header>
 
 <nav class="tabs" id="tabs">
-  <button data-tab="visit" class="on">Приём</button>
+  <button data-tab="patients" class="on">Пациенты</button>
+  <button data-tab="visit">Приём</button>
   <button data-tab="labs">Анализы</button>
   <button data-tab="card">Медкарта <span class="badge" id="pendingBadge" hidden></span></button>
   <button data-tab="risks">Риски <span class="badge red" id="riskBadge" hidden></span></button>
@@ -40,7 +44,21 @@
 <main>
 
 <!-- ПРИЁМ -->
-<section class="view on" id="view-visit">
+<!-- ПАЦИЕНТЫ -->
+<section class="view on" id="view-patients">
+  <div class="panel search-panel">
+    <h2>Найти пациента</h2>
+    <p class="muted">Введите ИИН или ФИО. Если пациента нет в базе, можно сразу создать новую карту.</p>
+    <div class="search-row">
+      <input id="pSearch" placeholder="ИИН (12 цифр) или ФИО" inputmode="search" autocomplete="off" aria-label="ИИН или ФИО пациента">
+      <button class="btn primary" id="pNew">Новый пациент</button>
+    </div>
+    <div id="pResults"></div>
+    <p class="muted small">Для демонстрации в базе уже есть 3 вымышленных пациента, например ИИН 920314450128.</p>
+  </div>
+</section>
+
+<section class="view" id="view-visit">
   <div class="grid2">
     <div class="panel">
       <h2>Запишите приём голосом</h2>
@@ -199,7 +217,7 @@
       <div><b>5</b>План и напоминания</div>
     </div>
     <p class="warn">Это прототип для учебного проекта. ИИ не ставит диагноз и не заменяет врача: каждый пункт проверяет и подтверждает человек.</p>
-    <button class="btn ghost" id="resetAll">Сбросить все данные</button>
+    <button class="btn ghost" id="resetAll">Сбросить всю базу к демо-данным</button>
   </div>
 </section>
 
@@ -209,16 +227,19 @@
 
 <dialog id="profileDlg">
   <form method="dialog" id="profileForm" class="form">
-    <h2>Профиль пациента</h2>
-    <label class="lbl" for="pName">Имя</label><input id="pName">
+    <h2 id="dlgTitle">Профиль пациента</h2>
+    <p class="err" id="dlgErr" hidden></p>
+    <label class="lbl" for="pIin">ИИН (12 цифр)</label><input id="pIin" inputmode="numeric" maxlength="12" pattern="\d{12}" required>
+    <label class="lbl" for="pName">ФИО</label><input id="pName" required>
     <label class="lbl" for="pAge">Возраст</label><input id="pAge" inputmode="numeric">
+    <label class="lbl" for="pSex">Пол</label><select id="pSex"><option value="">не указан</option><option value="ж">женский</option><option value="м">мужской</option></select>
     <label class="lbl" for="pWeight">Вес, кг</label><input id="pWeight" inputmode="decimal">
     <label class="lbl" for="pAllergies">Аллергии (через запятую)</label><input id="pAllergies">
     <label class="lbl" for="pChronic">Хронические заболевания</label><input id="pChronic">
     <label class="lbl" for="pMeds">Уже принимает</label><input id="pMeds">
     <div class="row">
-      <button class="btn ghost" value="cancel">Отмена</button>
-      <button class="btn primary" value="ok">Сохранить</button>
+      <button class="btn ghost" value="cancel" formnovalidate>Отмена</button>
+      <button class="btn primary" value="ok" id="dlgOk">Сохранить</button>
     </div>
   </form>
 </dialog>
