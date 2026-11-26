@@ -225,6 +225,7 @@ function renderChip() {
   const c = $('pChip');
   c.hidden = !S;
   if (S) c.textContent = `${shortName(S.patient.name)} · ИИН ${maskIin(S.iin)} · сменить`;
+  $('pClose').hidden = !S;
 }
 
 // ===== База пациентов: поиск по ИИН или ФИО =====
@@ -266,6 +267,12 @@ $('pResults').addEventListener('click', e => {
 });
 $('pNew').addEventListener('click', () => openProfileDlg(true));
 $('pChip').addEventListener('click', () => go('patients'));
+$('pClose').addEventListener('click', () => {
+  const name = S ? shortName(S.patient.name) : '';
+  if (recording) rec.stop();
+  openPatient(null); $('pSearch').value = ''; renderPatients(); go('patients');
+  toast('Карта закрыта' + (name ? ': ' + name : ''));
+});
 
 // ===== Вкладки =====
 function go(tab) {
